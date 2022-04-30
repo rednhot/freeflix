@@ -16,7 +16,7 @@
 
 Since backend and its options can be configured easily, you can use `freeflix` for pretty much any content that is shared on bittorrent network.
 
-Also, `freeflix` has a modular, extensible design by its nature, allowing users/developers to choose from/add support for multiple torrent sites. That aids in remaining independent of a particular torrent site, in case it goes down for some reason.
+Also, `freeflix` has a modular design, allowing users/developers to choose from/add support for multiple torrent sites. That aids in remaining independent of a particular torrent site, in case it goes down for some reason.
 
 ## Requirements ##
 
@@ -25,8 +25,8 @@ Also, `freeflix` has a modular, extensible design by its nature, allowing users/
 ### Installation ###
 
 ``` sh
-$ git clone https://github.com/rednhot/freeflix
-$ chmod +x ./freeflix/freeflix
+$ sudo curl -sL https://raw.githubusercontent.com/rednhot/freeflix/main/freeflix -o /usr/local/bin/freeflix
+$ sudo chmod +x /usr/local/bin/freeflix
 ```
 
 ### Usage ###
@@ -52,7 +52,7 @@ Usage: ./freeflix [options...] description
   * `freeflix -s 1337x -B qbittorrent -m 100 Heroes of Might and Magic 3` ----- Download one of the best strategic games ever.
 
 ### Extension ###
-Since `freeflix` is just a series of parse scripts, each specific to a torrent site, they have to share the same interface in order to work properly together.
+Since `freeflix` is just a series of parse functions, each specific to a torrent site, they have to share the same interface in order to work properly together.
 
 #### Input ####
 
@@ -62,7 +62,7 @@ Since `freeflix` is just a series of parse scripts, each specific to a torrent s
 
 #### Output ####
 
-Script should fill file, pointed by `entries` shell variable, with torrent entries, delimited by newline.
+Parse function should fill file, pointed by `entries` shell variable, with torrent entries, delimited by newline.
 Each entry has the following format: `Description\x01Size\x01Seeds\x01Leechs\x01Magnet_link`, that is items delimited by byte with value of 1.
 For example:
 ``` sh
@@ -75,8 +75,6 @@ For example:
 ``` sh
 sites["1337x.wtf"]="1337x"
 ```
-
-And finally, source your handler script from the main `freeflix` script. It's done in this way to maintain code cleaner.
 
 ### TODO ###
 

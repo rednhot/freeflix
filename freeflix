@@ -3,14 +3,165 @@
 # author: mathway
 
 # Some convinience functions
-source "${0%/*}"/help_functions.sh
+# Cool function. Most probably not used :)
+yesno()
+{
+    [ -z "$1" ] && echo 1
+    echo "$1" | sed -n '/yes/Iq1 ; /true/Iq1 ; /on/Iq1' && echo 1 || echo 0
+}
+
+warn()
+{
+    echo "Warning: $*" >&2
+}
+
+err()
+{
+    echo "Error: $*"
+    clean_tmp
+    exit 1
+}
+
+# Remove all temporary files that were generated during execution
+clean_tmp()
+{
+    [ "${verbose}" = '1' ] && rm -rfv "$tmpdir" || rm -rf "$tmpdir"
+}
+
+# Exit in a clean way
+clean_exit()
+{
+    clean_tmp
+    echo "Goodbye!"
+    exit 0
+}
+
+# Show help
+show_help()
+{
+    local opts
+    declare -A opts
+    printf "Usage: $1 [options...] description\n"
+    opts["-s, --site <torrent site>"]="Select torrent site from which to fetch magnet links."
+    opts["-l, --listsites"]="Use currently supported torrent sites."
+    opts["-m, --max-sites n"]="Show maximum of n torrents."
+    opts["-f, --fast"]="Alias for --max-torrents 1."
+    opts["-J, --justdoit"]="Defaults that just work."
+    opts["-W, --backend-opt <option>"]="Pass option to backend."
+    opts["-B, --backend <backend>"]="Backend to use for magnet link."
+    opts["-v, --verbose"]="Turn on verbose mode."
+    opts["-h, --help"]="Show help."
+    for o in "${!opts[@]}"; do
+	printf "\t%-30s\t%s\n" "$o" "${opts[$o]}"
+    done
+}
+
+# Since torrent sites can represent some text in
+# non-ascii encoding, here we do some magic to make output more appealing to see.
+clength() { clength=${#1}; }
+blength() { local LC_ALL=C; blength=${#1}; }
+align() {
+  local width="$1" arg="$2" blength clength
+  clength "$arg"; blength "$arg"
+  local i
+  if ((clength <= width)) ; then
+      printf "%s%*s" "$arg" "$((width - clength))" ""
+  else
+      for ((i=0; i < width; i++)) ; do
+	      printf "%s" "${arg:$i:1}"
+	  done
+  fi
+}
+
 
 # Mappings between torrent site domain names and corresponding handler functions
 declare -A sites
-# Sourcing torrent site handlers
-source "${0%/*}"/pirate_bay.sh 
-source "${0%/*}"/1337x.sh
-source "${0%/*}"/rutracker.sh
+
+# piratebay.party parser
+sites["piratebay.party"]="pirate_bay"
+pirate_bay()
+{
+    local tmp_url="$(mktemp --tmpdir=${tmpdir})"
+    local tmp_entry="$(mktemp --tmpdir=${tmpdir})"
+    local tmp_parse="$(mktemp --tmpdir=${tmpdir})"
+    local descr date size seeds leechs link
+    
+    curl -s -o "${tmp_url}" "https://thepiratebay.party/search/${query}/1/99/200"
+    local i=0
+    while grep -E -C3 -m1 -e 'magnet:\?' > "${tmp_entry}"; do
+	IFS="$(printf '\x01')" read -r descr date size seeds leechs \
+	   <<< "$(grep -Eoe '>[^<]+<' ${tmp_entry} | tr -d '><' | sed 's/\&amp;/&/ ; s/\&nbsp;/ /' | tr '\n' '\001')"
+	link=$(grep -Eoe 'magnet:\?[^"]*' ${tmp_entry})
+	printf "%s\x01" "${descr}" "${size}" "${seeds}" "${leechs}" "${link}" >> $entries
+	echo >> $entries
+
+	# Here for compliance with --max-sites option.
+	((i++))
+	((i==${max_sites})) && break
+    done < "${tmp_url}" 
+}
+
+sites["1337x.wtf"]="1337x"
+1337x()
+{
+    local tmp_url="$(mktemp --tmpdir=${tmpdir})"
+    local tmp_entry="$(mktemp --tmpdir=${tmpdir})"
+    local descr date size seeds leechs unused url_link
+    curl -s -o "${tmp_url}" "https://1337x.wtf/search/${query}/1/"
+    local i=0
+    while grep -E -m1 -A4 -e 'torrent\/[^"]*' > ${tmp_entry}; do
+	sed -i 's_</i>[[:digit:]]*</span>__' "${tmp_entry}"
+	IFS="$(printf '\x01')" read  -r descr seeds leechs date size unused unused \
+	   <<<"$(grep -Eoe '>[^<]+<' ${tmp_entry} | tr -d '<>' | tr '\n' '\001')"
+	url_link="$(grep -Eoe 'torrent\/[^"]*' ${tmp_entry})"
+	magnet_link="$(curl -s "https://1337x.wtf/$url_link" | grep -m1 -o 'magnet:?[^"]*')"
+	printf "%s\x01" "$descr" "$size" "$seeds" "$leechs" "$magnet_link" >> $entries
+	echo >> $entries
+	
+	# Here for compliance with --max-sites option.
+	((i++))
+	((i==${max_sites})) && break
+    done < ${tmp_url}
+}
+
+# rutracker.org parser
+# Note that in order to use it, you need an account, so first register.
+# Mostly useful for russian-speaking users.
+
+sites["rutracker.org"]="rutracker"
+rutracker()
+{
+    local tmp_entry tmp_cookies tmp_url
+    local descr size seeds leechs url_link magnet_link
+    tmp_entry=$(mktemp --tmpdir=${tmpdir})
+    tmp_cookies=$(mktemp --tmpdir=${tmpdir})
+    tmp_url=$(mktemp --tmpdir=${tmpdir})
+    username=$(printf '' | dmenu -l 0 -p 'Username: ')
+    password=$(printf '' | dmenu -l 0 -p 'Password: ')
+    curl -s -b ${tmp_cookies} -c ${tmp_cookies} -X POST \
+	 -d "login_username=${username}" -d "login_password=${password}" -d 'login=вход' \
+	 'https://rutracker.org/forum/login.php' >/dev/null 2>&1
+    curl -s -b ${tmp_cookies} -c ${tmp_cookies} -o ${tmp_url}  "https://rutracker.org/forum/tracker.php?nm=${query}"
+    local i=0
+    while grep -A26 -m1 -Ee 'wbr t-title' > ${tmp_entry} ; do
+	# line mapping
+	# 2-descr 10-size 12-seeds 13-leechs
+	grep "проверено" ${tmp_entry} >/dev/null || continue
+	url_link=$(grep -m1 -o 'viewtopic\.php[^"]*' ${tmp_entry})
+	descr=$(sed -n 2p < ${tmp_entry} | grep -Eoe '>[^<]+<' | tr -d '<>' | tr '\n' ' ')
+	size=$(sed -n 10p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | sed -E 's/\&nbsp;/ /; s/(MB|GB|TB)(.*)/\1/' | tr -d '<>')
+	seeds=$(sed -n 12p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | tr -d '<>')
+	leechs=$(sed -n 13p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | tr -d '<>')
+	magnet_link=$(curl -b ${tmp_cookies} -c ${tmp_cookies} -s "https://rutracker.org/forum/${url_link}" | grep -m1 -oe 'magnet:?[^"]*')
+	printf "%s\x01" "$descr" "$size" "$seeds" "$leechs" "$magnet_link" >> ${entries}
+	echo >> ${entries}
+
+	# As freeflix interface dictates, we need that for --max-sites option
+	((i++))
+	((i==${max_sites})) && break 
+    done <<<"$(iconv -c -f cp1251 -t utf-8//IGNORE ${tmp_url})" # Re-encoding from cp1251 to utf-8
+}
+
 
 # Terminate gracefully whenever user wishes to do so.
 trap "clean_exit" SIGINT

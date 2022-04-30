@@ -1,0 +1,151 @@
+#!/bin/bash
+
+# author: mathway
+
+# Some convinience functions
+source "${0%/*}"/help_functions.sh
+
+# Mappings between torrent site domain names and corresponding handler functions
+declare -A sites
+# Sourcing torrent site handlers
+source "${0%/*}"/pirate_bay.sh 
+source "${0%/*}"/1337x.sh
+source "${0%/*}"/rutracker.sh
+
+# Terminate gracefully whenever user wishes to do so.
+trap "clean_exit" SIGINT
+
+# Directory where temporary files will be saved
+tmpdir="$(mktemp --tmpdir -d freeflix.XXX)"
+
+# Menu program which will be used for prompting a user
+menu="dmenu -l 15 -i"
+
+# Maximum of torrent links for choosing
+max_sites=15
+
+# torrent site to use
+site=
+
+# Backend to use
+DEFAULT_BACKEND=peerflix
+DEFAULT_BACKEND_OPTS='-r -l -v'
+BACKEND=${DEFAULT_BACKEND}
+
+# Cumulative variable, containing options to backend (peerflix)
+BACKEND_OPTS=
+
+# Why not to let the user control the program via options?
+while [[ $# -gt 0 ]] ; do
+    case "$1" in
+	-s|--site) shift
+		  site="$1"
+		  ;;
+	-l|--listsites)	    i=1
+			    for s in "${!sites[@]}"; do
+				printf "[%d]\t%s\n" "$i" "$s"
+				((i++))
+			    done
+			    clean_exit
+			    ;;
+	-m|--max-sites) shift
+		       max_sites="$1"
+		       ;;
+	-f|--fast) max_sites=1
+		   ;;
+	-V|--verbose)  verbose=1
+		      ;;
+	-W|--backend-opt)  shift
+			   BACKEND_OPTS="${BACKEND_OPTS} $1"
+			   ;;
+	-B|--backend) shift
+		      BACKEND="$1"
+		      ;;
+	-J|--justdoit) BACKEND_OPTS="${DEFAULT_BACKEND_OPTS} ${BACKEND_OPTS}"
+		       ;;
+	-h|--help) show_help "$0"
+		  clean_exit
+		  ;;
+	-*) show_help "$0"
+	    err "Unrecognized option provided"
+	    ;;
+	*) query="${query} $1"
+	   ;;
+    esac
+    shift
+done
+
+[ -n "${verbose}" ] || exec 2>/dev/null
+
+shift $(($OPTIND - 1))
+
+# No query on the CL - prompt user now
+if [ -z "${query}" ]; then
+    query=$(printf "" | dmenu -p 'Your search: ')
+fi
+# Url-encode spaces in the query
+query=${query// /%20}
+
+# Determining which torrent site actually to use
+to_call=
+if ! sed -n '/[^[:digit:]]/q1' <<<"$site"; then
+    for s in "${!sites[@]}"; do
+
+	if [ "$s" = "${site}" ]; then
+	    to_call="${sites[${s}]}"
+	fi
+    done
+else
+    i=1
+    for s in "${!sites[@]}"; do
+	if [ "$i" = "${site}" ]; then
+	    to_call="${sites[${s}]}"
+	fi
+	((i++))
+    done
+fi
+[ -n "${to_call}" ] || to_call=${sites["$(echo "${!sites[@]}" | tr ' ' '\n' | dmenu -i)"]}
+[ -n "${to_call}" ] || err "No supported torrent site supplied."
+unset s
+
+# Some verbose(actually debug) info
+echo "Query is \"${query}\"" >&2
+echo "site is \"${site}\"" >&2
+echo "to_call is \"${to_call}\"" >&2
+echo "-------------------------" >&2
+
+entries="$(mktemp --tmpdir=${tmpdir})"
+
+# Calling a handler
+${to_call}
+
+# Handler wrote parsed torrent links to the ${entries} file. 
+# Here's it's format: Description:Size:Seeds:Leechs:Magnet_link\n...,
+# where `:' is 0x01 byte.
+# Now the job here is to unpack that file and prompt user to choose torrent link.
+link="$(mktemp --tmpdir=${tmpdir})"
+i=1
+if ((max_sites > 1)) ; then
+    while IFS= read -r entry; do
+	IFS="$(printf '\x01')" read -r descr size seeds leechs link <<< "$entry"
+	printf "[%2.2s] [" "${i}"
+	align 70 "${descr}"
+	printf "] [%10s] [S %3s] [L %3s] \n" "${size}" "${seeds}" "${leechs}"
+	((i++))
+    done < ${entries} |
+    	${menu} |
+	grep -Eoe '[[:digit:]]+' |
+	sed -n 1p |
+	xargs -I{} sed -n '{}p' "${entries}" |
+	cut -d"$(printf '\x01')" -f5 > ${link}
+else
+    sed -n 1p ${entries} | cut -d"$(printf '\x01')" -f5 > ${link}
+fi
+unset i
+
+echo "BACKEND_OPTS = \"${BACKEND_OPTS}\"" >&2
+
+# Job finished. Let's watch the film!
+[ -s "${link}" ] && ${BACKEND} "$(cat ${link})" ${BACKEND_OPTS}
+
+clean_exit

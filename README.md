@@ -21,12 +21,16 @@ Also, `freeflix` has a modular design, allowing users/developers to choose from/
 ## Requirements ##
 
 * [peerflix](https://github.com/mafintosh/peerflix) - A tool to stream torrent. `sudo npm install peerflix -g` 
+* [dmenu](https://tools.suckless.org/dmenu) - A simple menu program. `sudo apt install suckless-tools`
 
 ### Installation ###
 
 ``` sh
+$ sudo mkdir -p /usr/local/bin
 $ sudo curl -sL https://raw.githubusercontent.com/rednhot/freeflix/main/freeflix -o /usr/local/bin/freeflix
 $ sudo chmod +x /usr/local/bin/freeflix
+$ [[ "$PATH" != */usr/local/bin* ]] && echo 'PATH=/usr/local/bin:"$PATH"' >> ~/.bashrc
+$ source ~/.bashrc
 ```
 
 ### Usage ###

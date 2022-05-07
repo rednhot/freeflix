@@ -22,6 +22,10 @@ Also, `freeflix` has a modular design, allowing users/developers to choose from/
 * [peerflix](https://github.com/mafintosh/peerflix) - A tool to stream torrent. `sudo npm install peerflix -g` 
 * [dmenu](https://tools.suckless.org/dmenu) - A simple menu program. `sudo apt install suckless-tools`
 
+## Optional ##
+
+* [vlc](https://github.com/videolan/vlc) - VLC media player. `sudo apt install vlc`
+
 ### Installation ###
 
 ``` sh

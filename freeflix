@@ -26,6 +26,9 @@ err()
 clean_tmp()
 {
     [ "${verbose}" = '1' ] && rm -rfv "$tmpdir" || rm -rf "$tmpdir"
+    if ! echo "${BACKEND_OPTS}" | sed -nE "/\W?-r\W?/q1"; then
+	[ "${verbose}" = '1' ] && rm -rfv "/tmp/torrent-stream" || rm -rf "/tmp/torrent-stream"
+    fi
 }
 
 # Exit in a clean way
@@ -44,8 +47,8 @@ show_help()
     printf "Usage: $1 [options...] description\n"
     opts["-s, --site <torrent site>"]="Select torrent site from which to fetch magnet links."
     opts["-l, --listsites"]="Use currently supported torrent sites."
-    opts["-m, --max-sites n"]="Show maximum of n torrents."
-    opts["-f, --fast"]="Alias for --max-torrents 1."
+    opts["-m, --max-links <n>"]="Show maximum of n torrents."
+    opts["-f, --fast"]="Alias for --max-links 1."
     opts["-J, --justdoit"]="Defaults that just work."
     opts["-W, --backend-opt <option>"]="Pass option to backend."
     opts["-B, --backend <backend>"]="Backend to use for magnet link."
@@ -61,16 +64,16 @@ show_help()
 clength() { clength=${#1}; }
 blength() { local LC_ALL=C; blength=${#1}; }
 align() {
-  local width="$1" arg="$2" blength clength
-  clength "$arg"; blength "$arg"
-  local i
-  if ((clength <= width)) ; then
-      printf "%s%*s" "$arg" "$((width - clength))" ""
-  else
-      for ((i=0; i < width; i++)) ; do
-	      printf "%s" "${arg:$i:1}"
-	  done
-  fi
+    local width="$1" arg="$2" blength clength
+    clength "$arg"; blength "$arg"
+    local i
+    if ((clength <= width)) ; then
+	printf "%s%*s" "$arg" "$((width - clength))" ""
+    else
+	for ((i=0; i < width; i++)) ; do
+	    printf "%s" "${arg:$i:1}"
+	done
+    fi
 }
 
 
@@ -95,7 +98,7 @@ pirate_bay()
 	printf "%s\x01" "${descr}" "${size}" "${seeds}" "${leechs}" "${link}" >> $entries
 	echo >> $entries
 
-	# Here for compliance with --max-sites option.
+	# Here for compliance with --max-links option.
 	((i++))
 	((i==${max_sites})) && break
     done < "${tmp_url}" 
@@ -118,7 +121,7 @@ sites["1337x.wtf"]="1337x"
 	printf "%s\x01" "$descr" "$size" "$seeds" "$leechs" "$magnet_link" >> $entries
 	echo >> $entries
 	
-	# Here for compliance with --max-sites option.
+	# Here for compliance with --max-links option.
 	((i++))
 	((i==${max_sites})) && break
     done < ${tmp_url}
@@ -133,15 +136,42 @@ rutracker()
 {
     local tmp_entry tmp_cookies tmp_url
     local descr size seeds leechs url_link magnet_link
+    local cookies_exist=0
     tmp_entry=$(mktemp --tmpdir=${tmpdir})
-    tmp_cookies=$(mktemp --tmpdir=${tmpdir})
     tmp_url=$(mktemp --tmpdir=${tmpdir})
-    username=$(printf '' | dmenu -l 0 -p 'Username: ')
-    password=$(printf '' | dmenu -l 0 -p 'Password: ')
-    curl -s -b ${tmp_cookies} -c ${tmp_cookies} -X POST \
-	 -d "login_username=${username}" -d "login_password=${password}" -d 'login=вход' \
-	 'https://rutracker.org/forum/login.php' >/dev/null 2>&1
-    curl -s -b ${tmp_cookies} -c ${tmp_cookies} -o ${tmp_url}  "https://rutracker.org/forum/tracker.php?nm=${query}"
+    tmp_cookies="$HOME/.freeflix/cookies"
+    if [ ! -d "$HOME/.freeflix" ]; then
+	mkdir -p "$HOME/.freeflix" >/dev/null 2>&1 || err "Can't create .freeflix dir in $HOME"
+	chmod 700 "$HOME/.freeflix" >/dev/null 2>&1 || err "Can't change permissions of .freeflix dir in $HOME"
+    fi
+    [ -r "$HOME/.freeflix/cookies" ] && cookies_exist=1
+    local tries
+    local cookies_work=0
+    if [ "$cookies_exist" = "1" ]; then
+	tries=1
+	while [ $tries -le 3 ]; do
+	    curl -s -b ${tmp_cookies} -o ${tmp_url} "https://rutracker.org/forum/tracker.php?nm=${query}" >/dev/null 2>&1
+	    grep -asq 'wbr t-title' ${tmp_url} && break
+	    sleep 0.5
+	    tries=$(( tries + 1 ))
+	done
+	[ "$tries" -eq "4" ] || cookies_work=1
+    fi
+    if [ "$cookies_work" = "0" ]; then
+	rm -f "$HOME/.freeflix/cookies" >/dev/null 2>&1
+	for ((tries=0; tries<3; tries++)); do
+	    username=$(printf '' | dmenu -l 0 -p 'Username: ')
+	    password=$(printf '' | dmenu -l 0 -p 'Password: ')
+	    curl -s -c ${tmp_cookies} -X POST \
+		 -d "login_username=${username}" -d "login_password=${password}" -d 'login=вход' \
+		 'https://rutracker.org/forum/login.php' >/dev/null 2>&1
+	    curl -s -b ${tmp_cookies} -o ${tmp_url} "https://rutracker.org/forum/tracker.php?nm=${query}" >/dev/null 2>&1
+	    grep -asq 'wbr t-title' ${tmp_url} && break
+	    sleep 1
+	done
+	[ "$tries" = "3" ] && err "Can't parse rutracker :("
+    fi
+    chmod 600 "$HOME/.freeflix/cookies" >/dev/null 2>&1 || err "Can't set read-only permissions for cookie file"
     local i=0
     while grep -A26 -m1 -Ee 'wbr t-title' > ${tmp_entry} ; do
 	# line mapping
@@ -152,13 +182,12 @@ rutracker()
 	size=$(sed -n 10p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | sed -E 's/\&nbsp;/ /; s/(MB|GB|TB)(.*)/\1/' | tr -d '<>')
 	seeds=$(sed -n 12p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | tr -d '<>')
 	leechs=$(sed -n 13p ${tmp_entry} | grep -Eoe '>[[:digit:]][^<]*<' | tr -d '<>')
-	magnet_link=$(curl -b ${tmp_cookies} -c ${tmp_cookies} -s "https://rutracker.org/forum/${url_link}" | grep -m1 -oe 'magnet:?[^"]*')
-	printf "%s\x01" "$descr" "$size" "$seeds" "$leechs" "$magnet_link" >> ${entries}
-	echo >> ${entries}
-
-	# As freeflix interface dictates, we need that for --max-sites option
+	magnet_link=$(curl -b ${tmp_cookies} -s "https://rutracker.org/forum/${url_link}" | grep -m1 -oe 'magnet:?[^"]*')
+	[ -n "$magnet_link" ] && { printf "%s\x01" "$descr" "$size" "$seeds" "$leechs" "$magnet_link" >> ${entries}
+				   echo >> ${entries} ; }
+	# As freeflix interface dictates, we need that for --max-links option
 	((i++))
-	((i==${max_sites})) && break 
+	((i==${max_sites})) && break
     done <<<"$(iconv -c -f cp1251 -t utf-8//IGNORE ${tmp_url})" # Re-encoding from cp1251 to utf-8
 }
 
@@ -190,8 +219,8 @@ BACKEND_OPTS=
 while [[ $# -gt 0 ]] ; do
     case "$1" in
 	-s|--site) shift
-		  site="$1"
-		  ;;
+		   site="$1"
+		   ;;
 	-l|--listsites)	    i=1
 			    for s in "${!sites[@]}"; do
 				printf "[%d]\t%s\n" "$i" "$s"
@@ -199,13 +228,13 @@ while [[ $# -gt 0 ]] ; do
 			    done
 			    clean_exit
 			    ;;
-	-m|--max-sites) shift
-		       max_sites="$1"
-		       ;;
+	-m|--max-links) shift
+			max_sites="$1"
+			;;
 	-f|--fast) max_sites=1
 		   ;;
-	-V|--verbose)  verbose=1
-		      ;;
+	-v|--verbose)  verbose=1
+		       ;;
 	-W|--backend-opt)  shift
 			   BACKEND_OPTS="${BACKEND_OPTS} $1"
 			   ;;
@@ -215,8 +244,8 @@ while [[ $# -gt 0 ]] ; do
 	-J|--justdoit) BACKEND_OPTS="${DEFAULT_BACKEND_OPTS} ${BACKEND_OPTS}"
 		       ;;
 	-h|--help) show_help "$0"
-		  clean_exit
-		  ;;
+		   clean_exit
+		   ;;
 	-*) show_help "$0"
 	    err "Unrecognized option provided"
 	    ;;
@@ -286,7 +315,7 @@ if ((max_sites > 1)) ; then
     done < ${entries} |
     	${menu} |
 	grep -Eoe '[[:digit:]]+' |
-	sed -n 1p |
+	sed -n 1p | 
 	xargs -I{} sed -n '{}p' "${entries}" |
 	cut -d"$(printf '\x01')" -f5 > ${link}
 else
@@ -295,8 +324,8 @@ fi
 unset i
 
 echo "BACKEND_OPTS = \"${BACKEND_OPTS}\"" >&2
-
 # Job finished. Let's watch the film!
+
 [ -s "${link}" ] && ${BACKEND} "$(cat ${link})" ${BACKEND_OPTS}
 
 clean_exit

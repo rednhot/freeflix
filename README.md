@@ -11,7 +11,6 @@
 
 ## How does this work? ##
 
-
 `freeflix` searchs configurable torrent site for torrents(surprisingly), allowing a user to choose one which suits the most(like having more seeds, or having a better quality). After choosing one, it passes that **magnet** link to selectable backend, such as `peerflix`, and a video starts to play.
 
 Since backend and its options can be configured easily, you can use `freeflix` for pretty much any content that is shared on bittorrent network.
@@ -45,7 +44,7 @@ Usage: ./freeflix [options...] description
         -s, --site <torrent site>       Select torrent site from which to fetch magnet links.
         -h, --help                      Show help.
         -v, --verbose                   Turn on verbose mode.
-        -m, --max-sites n               Show maximum of n torrents.
+        -m, --max-links <n>             Show maximum of n torrents.
         -W, --backend-opt <option>      Pass option to backend.
 ```
 
